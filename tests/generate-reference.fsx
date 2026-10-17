@@ -15,7 +15,7 @@ for fixture in Directory.GetFiles(fixtures, "*.txt") do
 printfn "Generated .NET reference FIT files."
 
 // Exercise every shared mapping through the actual .NET message writers.
-// The browser tests compare these SDK-resolved numeric fields with decoded FIT output.
+// Emit SDK-resolved numeric fields for inspecting FIT exercise metadata.
 let number (value: Nullable<uint16>) =
     if value.HasValue && value.Value <> UInt16.MaxValue then int value.Value else -1
 let metadata =

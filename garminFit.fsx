@@ -12,7 +12,7 @@ open WorkoutConversion
 // Garmin mapping
 // ----------------------------------------------------------------------
 
-// Resolve SDK symbols from the same catalog used by the browser converter.
+// Resolve SDK symbols from the shared exercise mapping catalog.
 let private fitConstant (typeName: string) (name: string) =
     let sdkType = typeof<ExerciseCategory>.Assembly.GetType("Dynastream.Fit." + typeName, true)
     let field =

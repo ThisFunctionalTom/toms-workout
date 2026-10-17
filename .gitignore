@@ -1,13 +1,8 @@
 fit/
-node_modules/
-web/generated/
-web/dist/
+__pycache__/
 **/bin/
 **/obj/
-.fable/
 tests/output/
-web/test-results/
-web/playwright-report/
 .tmp/
 .env
 .env.*

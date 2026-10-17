@@ -1,10 +1,8 @@
 # Garmin exercise mappings
 
 Edit [shared/exercise-mappings.json](../shared/exercise-mappings.json).
-It is the single mapping source for both the PWA and the F# CLI.
-The browser adapter is `web/exercise-mappings.js`; the .NET adapter in
-`garminFit.fsx` reads the same JSON and resolves symbols in its own Garmin SDK.
-There are no separate JavaScript and F# mapping tables to synchronize.
+The .NET adapter in `garminFit.fsx` reads this JSON and resolves symbols in the
+Garmin FIT SDK. There are no separate mapping tables to synchronize.
 
 See the [full catalog coverage report](exercise-catalog-audit.md) for every
 built-in exercise, its mapping, and any limitation. The catalog snapshot was
@@ -53,14 +51,12 @@ support does not guarantee identical exercise labels in every Garmin client.
 2. Refresh `tests/liftosaur-exercises.json` from Liftosaur MCP when its catalog
    changes. This is an independent coverage snapshot, not a generated copy of
    the mapping table.
-3. Run `npm run audit:mappings --prefix web` to regenerate the coverage report.
-4. Run `npm test --prefix web`. Tests cover every snapshot name, duplicate aliases,
-   explicit unsupported decisions, equipment differences, SDK symbol validity,
-   and decoded FIT step/set metadata compared with the .NET message writers.
-5. Run `npm run build --prefix web` to verify the shared JSON bundles into the PWA.
+3. Run `node scripts/generate-mapping-audit.mjs` to regenerate the coverage report.
+4. Run `dotnet fsi conversion.tests.fsx` for workout conversion regressions and
+   `dotnet fsi tests/generate-reference.fsx` to encode sample FIT files and all
+   mapped exercises through the .NET Garmin FIT SDK.
 
 The .NET CLI requires the shared JSON alongside the repository scripts.
-The PWA bundles it locally and continues to convert loaded workouts offline.
 
 Reconvert workouts to include new mappings. Activities already imported into
 Garmin are not changed automatically.
