@@ -2,7 +2,7 @@
 
 This repository contains a Liftosaur-to-Garmin FIT converter, a public workout
 progress page, and one GitHub Actions workflow that refreshes the page and uploads
-the latest workout to Garmin Connect when run manually.
+up to five recent workouts to Garmin Connect when run manually.
 
 ## Convert workouts locally
 
@@ -46,9 +46,12 @@ Remove-Item Env:LIFTOSAUR_API_KEY
 
 There is one workflow: **Refresh progress and upload Garmin workout**. Its manual
 `workflow_dispatch` run refreshes the progress data from Liftosaur, generates a
-FIT file for the latest workout, uploads it to Garmin Connect, and deploys the
-progress page. Pushes to `main` refresh and deploy the progress page without
-uploading a workout.
+FIT history, uploads pending workouts to Garmin Connect, and deploys the progress
+page. Pushes to `main` refresh and deploy the progress page without uploading
+workouts. The uploader checks the latest 200 workouts, skips workouts
+through the last saved upload ID, and uploads pending workouts oldest first, with
+a maximum of five per run. If more than five are pending, run the workflow again
+to continue the catch-up.
 
 After adding the secrets below, open the [workflow page](https://github.com/ThisFunctionalTom/toms-workout/actions/workflows/pages.yml), select the `main` branch, and tap **Run workflow** after a workout.
 
