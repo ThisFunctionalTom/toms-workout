@@ -13,6 +13,10 @@ let check condition message =
 let source = "# Week 1\n## Day 1\n// \"quoted\" \\ café\nSquat / 3x5 / 20kg"
 let programJson = JsonSerializer.Serialize({| id = "abc"; name = "Test"; text = source |})
 let requests = ResizeArray<string * string * string>()
+let historyPageOne =
+    """{"data":{"records":[{"id":3,"text":"newest"},{"id":2,"text":"middle"}],"hasMore":true,"nextCursor":123}}"""
+let historyPageTwo =
+    """{"data":{"records":[{"id":1,"text":"baseline"}],"hasMore":true,"nextCursor":456}}"""
 
 type MockHandler() =
     inherit HttpMessageHandler()
@@ -22,11 +26,16 @@ type MockHandler() =
                 if isNull request.Content then Task.FromResult("")
                 else request.Content.ReadAsStringAsync()
             let path = request.RequestUri.AbsolutePath
+            let pathAndQuery = request.RequestUri.PathAndQuery
             requests.Add(request.Method.Method, path, body)
             if request.Method <> HttpMethod.Get then
                 check (request.Content.Headers.ContentType.MediaType = "application/json") "Expected JSON"
             let status, json =
-                if path.EndsWith("/invalid") then
+                if pathAndQuery.EndsWith("/history?limit=2") then
+                    HttpStatusCode.OK, historyPageOne
+                elif pathAndQuery.EndsWith("/history?limit=1&cursor=123") then
+                    HttpStatusCode.OK, historyPageTwo
+                elif path.EndsWith("/invalid") then
                     HttpStatusCode.UnprocessableEntity, "{\"error\":\"Invalid Liftoscript at line 3\"}"
                 elif path.EndsWith("/missing") then
                     HttpStatusCode.NotFound, "{\"error\":\"Program not found\"}"
@@ -78,6 +87,13 @@ let testPrograms () =
             failwith "Expected HTTP failure"
         with :? HttpRequestException as error ->
             check (error.StatusCode = Nullable status && error.Message.Contains(message)) "API error details lost"
+
+    requests.Clear()
+    let records, foundBoundary, hasMore =
+        downloadWorkoutsUntil http 2 10 (fun record -> record.Id = 2L) |> run
+    check (foundBoundary && hasMore) "Incremental history boundary not reported"
+    check (records |> List.map (fun record -> record.Id) = [3L; 2L]) "Incremental history should stop at the boundary"
+    check (requests.Count = 1) "Incremental history should not fetch older pages after finding boundary"
 
 testPrograms ()
 printfn "Program API tests passed."

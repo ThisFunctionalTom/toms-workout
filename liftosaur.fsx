@@ -224,6 +224,35 @@ let rec downloadWorkouts (http: HttpClient) remaining cursor acc =
                 return List.rev acc'
     }
 
+// Fetch newest-first pages until isBoundary identifies the last exported record.
+// The boundary record is included so the caller can validate and then discard it.
+let downloadWorkoutsUntil
+    (http: HttpClient)
+    pageSize
+    maxRecords
+    (isBoundary: LiftosaurRecord -> bool)
+    =
+    async {
+        if pageSize <= 0 then invalidArg "pageSize" "Page size must be positive."
+        if maxRecords <= 0 then invalidArg "maxRecords" "Record cap must be positive."
+
+        let records = ResizeArray<LiftosaurRecord>()
+        let mutable cursor = None
+        let mutable hasMore = true
+        let mutable foundBoundary = false
+
+        while hasMore && not foundBoundary && records.Count < maxRecords do
+            let! page = getPage http (min pageSize (maxRecords - records.Count)) cursor
+            for record in page.Records do
+                if records.Count < maxRecords && not foundBoundary then
+                    records.Add(record)
+                    if isBoundary record then foundBoundary <- true
+            hasMore <- page.HasMore
+            cursor <- page.NextCursor
+
+        return List.ofSeq records, foundBoundary, hasMore
+    }
+
 // ----------------------------------------------------------------------
 // Parsing helpers
 // ----------------------------------------------------------------------

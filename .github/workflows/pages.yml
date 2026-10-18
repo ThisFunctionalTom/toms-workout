@@ -6,12 +6,6 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      initialize_from_latest:
-        description: "After checking Garmin Connect for duplicates, upload only the newest Liftosaur workout to establish its marker"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -36,6 +30,7 @@ jobs:
           dotnet fsi conversion.tests.fsx
           dotnet fsi liftosaur.tests.fsx
           dotnet fsi syncPrograms.tests.fsx
+          python scripts/upload_latest_garmin_tests.py
       - name: Refresh workout summary
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
@@ -65,11 +60,6 @@ jobs:
             echo "::error::Add GARMIN_EMAIL and GARMIN_PASSWORD under repository Settings > Secrets and variables > Actions."
             exit 1
           fi
-      - name: Generate recent workout FIT files
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
-        env:
-          LIFTOSAUR_API_KEY: ${{ secrets.LIFTOSAUR_API_KEY }}
-        run: dotnet fsi liftosaur2garmin.fsx -- 200 ./fit
       - name: Set up Python for Garmin upload
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         uses: actions/setup-python@v6
@@ -81,14 +71,10 @@ jobs:
       - name: Upload new workouts to Garmin Connect
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         env:
+          LIFTOSAUR_API_KEY: ${{ secrets.LIFTOSAUR_API_KEY }}
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-        run: |
-          args=()
-          if [ "${{ inputs.initialize_from_latest }}" = "true" ]; then
-            args+=(--initialize-from-latest)
-          fi
-          python scripts/upload_latest_garmin.py ./fit "${args[@]}"
+        run: python scripts/upload_latest_garmin.py ./fit
       - name: Upload static site
         if: vars.PAGES_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v4
