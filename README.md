@@ -48,10 +48,15 @@ There is one workflow: **Refresh progress and upload Garmin workout**. Its manua
 `workflow_dispatch` run refreshes the progress data from Liftosaur, generates a
 FIT history, uploads pending workouts to Garmin Connect, and deploys the progress
 page. Pushes to `main` refresh and deploy the progress page without uploading
-workouts. The uploader checks the latest 200 workouts, skips workouts
-through the last saved upload ID, and uploads pending workouts oldest first, with
-a maximum of five per run. If more than five are pending, run the workflow again
-to continue the catch-up.
+workouts. Each generated FIT file includes its Liftosaur workout ID; after Garmin
+imports the file, the uploader saves that ID in the activity description, leaving
+the workout name unchanged, and scans recent Garmin activities to find the latest
+uploaded workout. It uploads pending workouts
+oldest first, with a maximum of five per run. If more than five are pending, run the
+workflow again to continue the catch-up. If no marked activity is found, the first
+run stops safely. To establish the marker, verify previous imports in Garmin Connect,
+then add `[Liftosaur ID <id>]` to that activity's description, replacing `<id>` with
+its Liftosaur record ID. A subsequent normal workflow run will catch up from there.
 
 After adding the secrets below, open the [workflow page](https://github.com/ThisFunctionalTom/toms-workout/actions/workflows/pages.yml), select the `main` branch, and tap **Run workflow** after a workout.
 
@@ -66,7 +71,8 @@ The Garmin uploader uses the unofficial `garminconnect` client because Garmin's
 public APIs do not provide this completed-activity upload operation. Garmin can
 change its private endpoints without notice. The upload also needs non-interactive
 Garmin sign-in; if the account requires an MFA code on each login, the workflow
-will fail.
+will fail. Once a FIT import succeeds, the uploader adds its Liftosaur ID to the
+activity description, which is the duplicate-detection marker used on later runs.
 
 To publish from Actions, enable GitHub Pages with **Settings → Pages → Build and
 deployment → GitHub Actions**, then set the repository variable `PAGES_ENABLED` to

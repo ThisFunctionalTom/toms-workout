@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      initialize_from_latest:
+        description: "After checking Garmin Connect for duplicates, upload only the newest Liftosaur workout to establish its marker"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -19,7 +25,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      actions: write
       contents: read
     steps:
       - uses: actions/checkout@v6
@@ -78,8 +83,12 @@ jobs:
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/upload_latest_garmin.py ./fit
+        run: |
+          args=()
+          if [ "${{ inputs.initialize_from_latest }}" = "true" ]; then
+            args+=(--initialize-from-latest)
+          fi
+          python scripts/upload_latest_garmin.py ./fit "${args[@]}"
       - name: Upload static site
         if: vars.PAGES_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v4

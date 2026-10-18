@@ -104,11 +104,22 @@ let createTimerEvent
     message.SetEventType(eventType)
     message
 
-let createWorkoutSummary workout =
+let liftosaurMarker sourceId =
+    sourceId |> Option.map (fun id -> $"[Liftosaur ID {id}]")
+
+let combineDescription marker description =
+    match marker with
+    | Some marker ->
+        let prefix = $"{marker} | "
+        (prefix + description).Substring(0, min 255 (prefix.Length + description.Length))
+    | None -> description
+
+let createWorkoutSummary workout sourceId =
     let exercises = workoutExercises workout
+    let marker = liftosaurMarker sourceId
     let message = WorkoutMesg()
     message.SetWktName(workoutName workout)
-    message.SetWktDescription(workoutDescription workout)
+    message.SetWktDescription(combineDescription marker (workoutDescription workout))
     message.SetSport(Sport.Training)
     message.SetSubSport(SubSport.StrengthTraining)
     message.SetNumValidSteps(uint16 exercises.Length)
@@ -131,8 +142,8 @@ let createWorkoutStep index (exercise: string) =
 
     message
 
-let createWorkoutMessages workout =
-    let summary = createWorkoutSummary workout :> Mesg
+let createWorkoutMessages workout sourceId =
+    let summary = createWorkoutSummary workout sourceId :> Mesg
     let steps =
         workoutExercises workout
         |> List.mapi (fun index exercise ->
@@ -219,7 +230,8 @@ let createSession
     (startTime: Dynastream.Fit.DateTime)
     (endTime: Dynastream.Fit.DateTime)
     (duration: float32)
-    (name: string) =
+    (name: string)
+    sourceId =
     let message = SessionMesg()
     message.SetMessageIndex(0us)
     message.SetTimestamp(endTime)
@@ -228,7 +240,11 @@ let createSession
     message.SetTotalTimerTime(duration)
     message.SetSport(Sport.Training)
     message.SetSubSport(SubSport.StrengthTraining)
-    message.SetSportProfileName(name)
+    message.SetSportProfileName(
+        match liftosaurMarker sourceId with
+        | Some marker -> $"{name} {marker}"
+        | None -> name
+    )
     message.SetFirstLapIndex(0us)
     message.SetNumLaps(1us)
     message
@@ -262,7 +278,7 @@ let encodeFitFile
     messagesAfterSets |> List.iter encoder.Write
     encoder.Close()
 
-let writeFitFile (workout: Workout) path =
+let writeFitFileWithSource (workout: Workout) sourceId path =
     let timeline = buildTimeline workout
     let startTime = fitTime workout.Start
     let endDate =
@@ -274,7 +290,7 @@ let writeFitFile (workout: Workout) path =
     let messagesBeforeSets =
         [ createFileId serial startTime :> Mesg
           createDeviceInfo serial startTime :> Mesg ]
-        @ createWorkoutMessages workout
+        @ createWorkoutMessages workout sourceId
         @ [ createTimerEvent startTime EventType.Start :> Mesg ]
 
     let messagesAfterSets =
@@ -284,7 +300,7 @@ let writeFitFile (workout: Workout) path =
               startTime
               endTime
               duration
-              (workoutName workout) :> Mesg
+              (workoutName workout) sourceId :> Mesg
           createActivity endTime duration :> Mesg ]
 
     let setMessages = createFitSets workout.Start timeline
@@ -293,3 +309,6 @@ let writeFitFile (workout: Workout) path =
         messagesBeforeSets
         setMessages
         messagesAfterSets
+
+let writeFitFile (workout: Workout) path =
+    writeFitFileWithSource workout None path

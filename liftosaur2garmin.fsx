@@ -59,7 +59,7 @@ let writeWorkout outputDir record =
     let restCount =
         countTimelineEntries (function Rest _ -> true | _ -> false) timeline
 
-    writeFitFile workout path
+    writeFitFileWithSource workout (Some(string record.Id)) path
     printfn
         "Wrote %s (%d active sets, %d rests, %ds session)"
         path

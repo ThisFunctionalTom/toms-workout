@@ -1,61 +1,67 @@
-"""Upload up to five recent Liftosaur workouts that have not been uploaded."""
+"""Upload recent Liftosaur workouts not already marked in Garmin Connect."""
 
 from __future__ import annotations
 
-import json
+import argparse
 import logging
 import os
+import re
 import sys
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from garminconnect import Garmin
 
 
-LAST_UPLOADED_VARIABLE = "LAST_GARMIN_UPLOAD_LIFTOSAUR_ID"
 MAX_WORKOUTS_PER_RUN = 5
+ACTIVITY_PAGE_SIZE = 100
+MAX_ACTIVITY_PAGES = 10
+LIFTOSAUR_MARKER = re.compile(r"\[Liftosaur ID (\d+)\]", re.IGNORECASE)
 
 
-def github_variable_request(method: str, url: str, token: str, body: dict | None = None):
-    data = json.dumps(body).encode("utf-8") if body is not None else None
-    request = Request(
-        url,
-        data=data,
-        method=method,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urlopen(request, timeout=20) as response:
-            payload = response.read()
-            return response.status, json.loads(payload) if payload else None
-    except HTTPError as error:
-        if error.code == 404 and method == "GET":
-            return 404, None
-        raise
+def marker_ids(activities: list[dict]) -> list[str]:
+    ids = []
+    for activity in activities:
+        description = activity.get("description", "")
+        if isinstance(description, str):
+            ids.extend(LIFTOSAUR_MARKER.findall(description))
+    return ids
 
 
-def get_last_uploaded_id(token: str, repository: str) -> str | None:
-    url = (
-        f"https://api.github.com/repos/{repository}/actions/variables/"
-        f"{LAST_UPLOADED_VARIABLE}"
-    )
-    status, response = github_variable_request("GET", url, token)
-    return response["value"] if status == 200 else None
+def pending_workouts(
+    workouts: list[tuple[Path, str]], activities: list[dict]
+) -> tuple[list[tuple[Path, str]], bool]:
+    uploaded_ids = marker_ids(activities)
+    if not uploaded_ids:
+        return workouts[-1:], True
+
+    id_to_index = {workout_id: index for index, (_, workout_id) in enumerate(workouts)}
+    latest_id = uploaded_ids[0]
+    if latest_id not in id_to_index:
+        raise ValueError(
+            f"Garmin's latest Liftosaur marker ({latest_id}) is outside the downloaded "
+            "Liftosaur history; refusing to guess which workouts are new."
+        )
+
+    next_index = id_to_index[latest_id] + 1
+    return workouts[next_index : next_index + MAX_WORKOUTS_PER_RUN], False
 
 
-def save_last_uploaded_id(token: str, repository: str, workout_id: str) -> None:
-    base_url = f"https://api.github.com/repos/{repository}/actions/variables"
-    url = f"{base_url}/{LAST_UPLOADED_VARIABLE}"
-    body = {"name": LAST_UPLOADED_VARIABLE, "value": workout_id}
-    status, _ = github_variable_request("GET", url, token)
-    method = "PATCH" if status == 200 else "POST"
-    github_variable_request(method, url if method == "PATCH" else base_url, token, body)
+def find_activity_id(upload_response: dict) -> str | None:
+    result = upload_response.get("detailedImportResult", upload_response)
+    if isinstance(result, dict) and isinstance(result.get("data"), dict):
+        result = result["data"].get("detailedImportResult", result["data"])
+    if not isinstance(result, dict):
+        raise ValueError("Garmin returned an unrecognized upload response.")
+    successes = result.get("successes", [])
+    if not successes or not isinstance(successes[0], dict):
+        failures = result.get("failures", [])
+        raise ValueError(f"Garmin rejected the workout import: {failures!r}")
+    activity_id = successes[0].get("internalId")
+    return str(activity_id) if activity_id is not None else None
+
+
+def activity_marker(workout_id: str) -> str:
+    return f"[Liftosaur ID {workout_id}]"
 
 
 def main() -> int:
@@ -65,78 +71,69 @@ def main() -> int:
         print("GARMIN_EMAIL and GARMIN_PASSWORD must be configured as Actions secrets.", file=sys.stderr)
         return 2
 
-    fit_dir = Path(sys.argv[1] if len(sys.argv) > 1 else "./fit")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("fit_dir", nargs="?", default="./fit")
+    parser.add_argument("--initialize-from-latest", action="store_true")
+    args = parser.parse_args()
+
+    fit_dir = Path(args.fit_dir)
     files = sorted(fit_dir.glob("*.fit"))
-    if not files:
-        print(f"Expected workout FIT files in {fit_dir}, found none.", file=sys.stderr)
-        return 2
-
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    repository = os.environ.get("GITHUB_REPOSITORY", "").strip()
-    if not token or not repository:
-        print("GITHUB_TOKEN and GITHUB_REPOSITORY are required for duplicate protection.", file=sys.stderr)
-        return 2
-
-    workouts = []
-    for path in files:
-        workout_id = path.stem.rsplit("_", 1)[-1]
-        if not workout_id.isdigit():
-            print(f"Could not read the Liftosaur workout ID from {path.name}.", file=sys.stderr)
-            return 2
-        workouts.append((path, workout_id))
-
-    try:
-        last_uploaded_id = get_last_uploaded_id(token, repository)
-    except (HTTPError, URLError, TimeoutError, KeyError, ValueError) as error:
-        status = getattr(error, "code", "network error")
+    workouts = [
+        (path, path.stem.rsplit("_", 1)[-1])
+        for path in files
+        if path.stem.rsplit("_", 1)[-1].isdigit()
+    ]
+    if not workouts:
         print(
-            "Could not check the saved Garmin upload ID; refusing to upload to avoid a duplicate. "
-            f"(HTTP {status})",
+            f"Expected generated Liftosaur FIT files with numeric IDs in {fit_dir}, found none.",
             file=sys.stderr,
         )
-        return 1
-
-    if last_uploaded_id is None:
-        # There is no saved baseline yet. Preserve the old first-run behavior and
-        # initialize the marker with the newest workout only.
-        pending = workouts[-1:]
-    else:
-        last_index = next(
-            (index for index, (_, workout_id) in enumerate(workouts) if workout_id == last_uploaded_id),
-            None,
-        )
-        if last_index is None:
-            print(
-                "The saved upload ID is outside the downloaded workout history. "
-                "Refusing to upload because the correct next workout cannot be identified.",
-                file=sys.stderr,
-            )
-            return 1
-        else:
-            # FIT files are sorted oldest first, so take the next batch after the
-            # saved ID. Further manual runs continue catching up in order.
-            pending = workouts[last_index + 1 : last_index + 1 + MAX_WORKOUTS_PER_RUN]
-    if not pending:
-        print(f"Workout {last_uploaded_id} is already the latest uploaded workout; skipping.")
-        return 0
+        return 2
 
     # Keep third-party request logs from exposing account or session details.
     logging.getLogger("garminconnect").setLevel(logging.CRITICAL)
     try:
         client = Garmin(email=email, password=password)
         client.login()
+        activities = []
+        for page in range(MAX_ACTIVITY_PAGES):
+            page_activities = client.get_activities(
+                start=page * ACTIVITY_PAGE_SIZE,
+                limit=ACTIVITY_PAGE_SIZE,
+            )
+            if not page_activities:
+                break
+            activities.extend(page_activities)
+            if marker_ids(page_activities):
+                break
+
+        pending, first_run = pending_workouts(workouts, activities)
+        if first_run and not args.initialize_from_latest:
+            print(
+                "No Garmin activity with a Liftosaur ID marker was found. "
+                "Verify previous imports or rerun with --initialize-from-latest "
+                "to upload only the newest Liftosaur workout.",
+                file=sys.stderr,
+            )
+            return 1
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
     except Exception as error:  # Garmin's unofficial endpoints can change without notice.
         print(
-            "Garmin upload failed. Check the workflow log for the error type; "
-            "also confirm that Garmin sign-in does not require an interactive MFA code. "
+            "Could not identify the latest Liftosaur workout in Garmin Connect. "
             f"({type(error).__name__})",
             file=sys.stderr,
         )
         return 1
 
+    if not pending:
+        print("Garmin Connect already contains the latest Liftosaur workout; skipping.")
+        return 0
+
     for path, workout_id in pending:
         try:
-            client.import_activity(str(path))
+            upload_response = client.import_activity(str(path))
         except Exception as error:  # Garmin's unofficial endpoints can change without notice.
             print(
                 f"Garmin upload failed for {path.name}. Check the workflow log for the error type; "
@@ -147,20 +144,25 @@ def main() -> int:
             return 1
 
         try:
-            save_last_uploaded_id(token, repository, workout_id)
-        except (HTTPError, URLError, TimeoutError, KeyError, ValueError) as error:
-            status = getattr(error, "code", "network error")
+            activity_id = find_activity_id(upload_response)
+            if not activity_id:
+                raise ValueError("Garmin returned no activity ID to mark.")
+            client.set_activity_description(activity_id, activity_marker(workout_id))
+        except Exception as error:  # Garmin accepted the file, but may not have applied the marker.
             print(
-                f"Garmin accepted {path.name}, but GitHub could not save its duplicate-protection ID. "
-                "Check Garmin Connect before rerunning this workflow. "
-                f"(HTTP {status})",
+                f"Garmin accepted {path.name}, but the Liftosaur marker could not be set. "
+                "Verify the activity in Garmin Connect before rerunning to avoid a duplicate. "
+                f"({type(error).__name__})",
                 file=sys.stderr,
             )
             return 1
 
         print(f"Uploaded workout to Garmin Connect: {path.name}")
 
-    print(f"Uploaded {len(pending)} workout(s); this run is limited to {MAX_WORKOUTS_PER_RUN}.")
+    print(
+        f"Uploaded {len(pending)} workout(s); this run is limited to "
+        f"{MAX_WORKOUTS_PER_RUN}."
+    )
     return 0
 
 
